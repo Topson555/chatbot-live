@@ -1,0 +1,9 @@
+{
+  "short_name": "Chatbot",
+  "name": "React AI Chatbot",
+  "icons": [],
+  "start_url": ".",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
+  "display": "standalone"
+}
