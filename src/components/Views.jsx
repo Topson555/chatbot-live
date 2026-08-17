@@ -1,27 +1,87 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Icon } from './Icon';
 
 export const ChatHistoryView = ({ onSelectSession }) => {
-  const historyItems = [
-    { id: '1', title: 'Support Ticketing System Setup', time: 'Today, 2:15 PM' },
-    { id: '2', title: 'Express.js Route Debugging', time: 'Yesterday' },
-    { id: '3', title: 'MERN Stack Authentication Flow', time: '3 days ago' },
-  ];
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchSessions = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch('http://localhost:5000/api/chat/sessions');
+      if (!res.ok) throw new Error('Failed to fetch chat history.');
+      const data = await res.json();
+      setSessions(Array.isArray(data) ? data : data.sessions || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSessions();
+  }, []);
+
+  const handleDeleteSession = async (e, id) => {
+    e.stopPropagation();
+    try {
+      const res = await fetch(`http://localhost:5000/api/chat/sessions/${id}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        setSessions((prev) => prev.filter((item) => item._id !== id));
+      }
+    } catch (err) {
+      console.error('Failed to delete session:', err);
+    }
+  };
+
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-4">
-      <h2 className="text-xl font-bold text-slate-900">Chat History</h2>
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl font-bold text-slate-900">Chat History</h2>
+        <button
+          onClick={fetchSessions}
+          className="text-xs font-semibold text-cyan-600 hover:text-cyan-700 transition"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {loading && <p className="text-xs text-slate-400">Loading chat history...</p>}
+      {error && <p className="text-xs text-red-500">{error}</p>}
+
+      {!loading && !error && sessions.length === 0 && (
+        <p className="text-xs text-slate-400">No previous sessions found.</p>
+      )}
+
       <div className="space-y-3">
-        {historyItems.map((item) => (
+        {sessions.map((item) => (
           <div
-            key={item.id}
-            onClick={() => onSelectSession(item.id, item.title)}
-            className="p-4 bg-white border border-slate-200 rounded-2xl hover:border-cyan-400 cursor-pointer transition flex justify-between items-center shadow-xs"
+            key={item._id}
+            onClick={() => onSelectSession(item._id, item.title)}
+            className="p-4 bg-white border border-slate-200 rounded-2xl hover:border-cyan-400 cursor-pointer transition flex justify-between items-center shadow-xs group"
           >
             <div>
-              <h3 className="font-semibold text-slate-800 text-sm">{item.title}</h3>
-              <p className="text-xs text-slate-400 mt-0.5">{item.time}</p>
+              <h3 className="font-semibold text-slate-800 text-sm">{item.title || 'Untitled Session'}</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {item.updatedAt ? new Date(item.updatedAt).toLocaleString() : 'Recent'}
+              </p>
             </div>
-            <span className="text-xs font-semibold text-cyan-600">Open Chat →</span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-semibold text-cyan-600 group-hover:translate-x-0.5 transition-transform">
+                Open Chat →
+              </span>
+              <button
+                onClick={(e) => handleDeleteSession(e, item._id)}
+                className="text-xs text-slate-400 hover:text-red-500 transition px-2 py-1 rounded-lg hover:bg-red-50"
+                title="Delete Session"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         ))}
       </div>
