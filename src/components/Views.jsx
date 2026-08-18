@@ -89,19 +89,77 @@ export const ChatHistoryView = ({ onSelectSession }) => {
   );
 };
 
-export const KnowledgeBaseView = () => (
-  <div className="p-6 max-w-4xl mx-auto space-y-4">
-    <h2 className="text-xl font-bold text-slate-900">Knowledge Base</h2>
-    <p className="text-xs text-slate-500">Upload documentation (.pdf, .txt, .json) for RAG context retrieval.</p>
-    <div className="border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center bg-slate-50 space-y-3">
-      <Icon name="knowledge" className="w-8 h-8 mx-auto text-slate-400" />
-      <p className="text-sm font-semibold text-slate-700">Drag & Drop knowledge files here</p>
-      <button className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-xl hover:bg-slate-800 transition">
-        Browse Files
-      </button>
+export const KnowledgeBaseView = () => {
+  const [dragOver, setDragOver] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [statusMsg, setStatusMsg] = useState('');
+
+  const handleFileUpload = async (files) => {
+    if (!files || files.length === 0) return;
+    const formData = new FormData();
+    formData.append('file', files[0]);
+
+    setUploading(true);
+    setStatusMsg('');
+
+    try {
+      const res = await fetch('http://localhost:5000/api/knowledge/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStatusMsg(`Successfully ingested: ${files[0].name}`);
+      } else {
+        setStatusMsg(`Upload failed: ${data.error || 'Server error'}`);
+      }
+    } catch (err) {
+      setStatusMsg(`Upload failed: ${err.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="p-6 max-w-4xl mx-auto space-y-4">
+      <h2 className="text-xl font-bold text-slate-900">Knowledge Base</h2>
+      <p className="text-xs text-slate-500">Upload documentation (.pdf, .txt, .json) for RAG context retrieval.</p>
+      
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          handleFileUpload(e.dataTransfer.files);
+        }}
+        className={`border-2 border-dashed ${
+          dragOver ? 'border-cyan-400 bg-cyan-50/30' : 'border-slate-300 bg-slate-50'
+        } rounded-2xl p-8 text-center space-y-3 transition`}
+      >
+        <Icon name="knowledge" className="w-8 h-8 mx-auto text-slate-400" />
+        <p className="text-sm font-semibold text-slate-700">Drag & Drop knowledge files here</p>
+        
+        <label className="inline-block px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-xl hover:bg-slate-800 transition cursor-pointer">
+          {uploading ? 'Processing & Vectorizing...' : 'Browse Files'}
+          <input
+            type="file"
+            accept=".pdf,.txt,.json"
+            className="hidden"
+            onChange={(e) => handleFileUpload(e.target.files)}
+            disabled={uploading}
+          />
+        </label>
+      </div>
+
+      {statusMsg && (
+        <p className={`text-xs font-medium text-center ${statusMsg.includes('Successfully') ? 'text-emerald-600' : 'text-red-500'}`}>
+          {statusMsg}
+        </p>
+      )}
     </div>
-  </div>
-);
+  );
+};
 
 export const ApiKeysView = () => {
   const [apiKey, setApiKey] = useState('');
@@ -127,24 +185,66 @@ export const ApiKeysView = () => {
   );
 };
 
-export const SystemStatusView = () => (
-  <div className="p-6 max-w-3xl mx-auto space-y-4">
-    <h2 className="text-xl font-bold text-slate-900">System Status</h2>
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between">
-        <div>
-          <h4 className="text-xs font-semibold text-emerald-900">Node Backend Server</h4>
-          <p className="text-[11px] text-emerald-700">http://localhost:5000</p>
-        </div>
-        <span className="text-[10px] bg-emerald-200 text-emerald-800 font-bold px-2 py-1 rounded-md">Online</span>
+export const SystemStatusView = () => {
+  const [status, setStatus] = useState({ backend: 'checking', gemini: 'checking' });
+
+  const checkHealth = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/health');
+      if (res.ok) {
+        const data = await res.json();
+        setStatus({
+          backend: 'online',
+          gemini: data.geminiKeyConfigured ? 'active' : 'missing_key',
+        });
+      } else {
+        setStatus({ backend: 'offline', gemini: 'unknown' });
+      }
+    } catch {
+      setStatus({ backend: 'offline', gemini: 'unknown' });
+    }
+  };
+
+  useEffect(() => {
+    checkHealth();
+    const interval = setInterval(checkHealth, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="p-6 max-w-3xl mx-auto space-y-4">
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl font-bold text-slate-900">System Status</h2>
+        <button onClick={checkHealth} className="text-xs font-semibold text-cyan-600 hover:text-cyan-700">
+          Check Now
+        </button>
       </div>
-      <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between">
-        <div>
-          <h4 className="text-xs font-semibold text-emerald-900">Gemini API Connection</h4>
-          <p className="text-[11px] text-emerald-700">Status: Operational</p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="p-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-between shadow-xs">
+          <div>
+            <h4 className="text-xs font-semibold text-slate-900">Node Backend Server</h4>
+            <p className="text-[11px] text-slate-500">http://localhost:5000</p>
+          </div>
+          <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${
+            status.backend === 'online' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+          }`}>
+            {status.backend.toUpperCase()}
+          </span>
         </div>
-        <span className="text-[10px] bg-emerald-200 text-emerald-800 font-bold px-2 py-1 rounded-md font-sans">Active</span>
+
+        <div className="p-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-between shadow-xs">
+          <div>
+            <h4 className="text-xs font-semibold text-slate-900">Gemini API Connection</h4>
+            <p className="text-[11px] text-slate-500">Status: {status.gemini}</p>
+          </div>
+          <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${
+            status.gemini === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+          }`}>
+            {status.gemini === 'active' ? 'ACTIVE' : 'CONFIG REQUIRED'}
+          </span>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
