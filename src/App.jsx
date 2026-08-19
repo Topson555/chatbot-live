@@ -25,6 +25,13 @@ export default function Chatbot() {
   const [currentSessionTitle, setCurrentSessionTitle] = useState(null);
   const [sidebarSessions, setSidebarSessions] = useState([]);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [showCopyToast, setShowCopyToast] = useState(false);
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
+
+  // Session rename/edit state
+  const [editingSessionId, setEditingSessionId] = useState(null);
+  const [editingTitleText, setEditingTitleText] = useState('');
+
   const [messages, setMessages] = useState([
     { id: 1, role: 'bot', text: "Hello! I'm TOPSON AI Assistance. How can I help streamline your workflow today?" },
   ]);
@@ -33,14 +40,25 @@ export default function Chatbot() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [thinkingStep, setThinkingStep] = useState('Analyzing request...');
 
+  const chatContainerRef = useRef(null);
   const chatEndRef = useRef(null);
+  const activeEventSourceRef = useRef(null);
+  const isUserScrolledUpRef = useRef(false);
+
+  useEffect(() => {
+    if (showCopyToast) {
+      const timer = setTimeout(() => setShowCopyToast(false), 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [showCopyToast]);
 
   const fetchSidebarSessions = async () => {
     try {
       const res = await fetch('http://localhost:5000/api/chat/sessions');
       if (res.ok) {
         const data = await res.json();
-        setSidebarSessions(Array.isArray(data) ? data : []);
+        const sessionsList = data.sessions || (Array.isArray(data) ? data : []);
+        setSidebarSessions(sessionsList);
       }
     } catch (err) {
       console.error('Failed to fetch sidebar sessions:', err);
@@ -51,24 +69,38 @@ export default function Chatbot() {
     fetchSidebarSessions();
   }, [currentSessionId]);
 
+  const handleScroll = () => {
+    if (!chatContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+    const isBottom = scrollHeight - scrollTop - clientHeight < 100;
+    isUserScrolledUpRef.current = !isBottom;
+  };
+
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!isUserScrolledUpRef.current) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages, loading, thinkingStep]);
 
   const handleStartNewChat = () => {
+    handleStopGeneration();
     setCurrentSessionId(null);
     setCurrentSessionTitle(null);
     setMessages([
       { id: Date.now(), role: 'bot', text: "Hello! Started a fresh conversation thread. What are we working on?" },
     ]);
     setActiveTab('Chat');
+    setIsMobileDrawerOpen(false);
   };
 
   const handleSelectHistorySession = async (sessionId, title) => {
+    handleStopGeneration();
     setCurrentSessionId(sessionId);
     setCurrentSessionTitle(title || `Session ${sessionId.slice(-4)}`);
     setActiveTab('Chat');
+    setActiveTab('Chat');
     setHistoryLoading(true);
+    setIsMobileDrawerOpen(false);
 
     try {
       const res = await fetch(`http://localhost:5000/api/chat/session/${sessionId}`);
@@ -96,30 +128,99 @@ export default function Chatbot() {
     }
   };
 
-  const exportChat = (format) => {
-    let content = '';
-    let filename = `chat-export-${currentSessionId || 'session'}.${format}`;
-
-    if (format === 'json') {
-      content = JSON.stringify(messages, null, 2);
-    } else {
-      content = messages.map((m) => `**${m.role.toUpperCase()}**: ${m.text}\n`).join('\n---\n\n');
+  // Fixed Delete Handler
+  const handleDeleteSession = async (e, sessionId) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
     }
 
-    const blob = new Blob([content], { type: format === 'json' ? 'application/json' : 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-    setShowSettingsMenu(false);
+    if (!window.confirm("Are you sure you want to delete this chat session?")) return;
+
+    try {
+      const res = await fetch(`http://localhost:5000/api/chat/sessions/${sessionId}`, {
+        method: 'DELETE',
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setSidebarSessions((prev) => prev.filter((s) => s._id !== sessionId));
+
+        if (currentSessionId === sessionId) {
+          handleStartNewChat();
+        }
+      } else {
+        console.error("Delete failed on server:", data.error || data.message);
+      }
+    } catch (err) {
+      console.error("Failed to delete session:", err);
+    }
+  };
+
+  // Fixed Rename Start Handler
+  const handleStartRename = (e, session) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    setEditingSessionId(session._id);
+    setEditingTitleText(session.title || 'Untitled Chat');
+  };
+
+  // Fixed Save Rename Handler
+  const handleSaveRename = async (e, sessionId) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+
+    if (!editingTitleText.trim()) {
+      setEditingSessionId(null);
+      return;
+    }
+
+    try {
+      const res = await fetch(`http://localhost:5000/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: editingTitleText.trim() }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setSidebarSessions((prev) =>
+          prev.map((s) => (s._id === sessionId ? { ...s, title: editingTitleText.trim() } : s))
+        );
+
+        if (currentSessionId === sessionId) {
+          setCurrentSessionTitle(editingTitleText.trim());
+        }
+      } else {
+        console.error("Rename failed on server:", data.error || data.message);
+      }
+    } catch (err) {
+      console.error("Failed to rename session:", err);
+    } finally {
+      setEditingSessionId(null);
+    }
+  };
+
+  const handleStopGeneration = () => {
+    if (activeEventSourceRef.current) {
+      activeEventSourceRef.current.close();
+      activeEventSourceRef.current = null;
+      setLoading(false);
+      fetchSidebarSessions();
+    }
   };
 
   const sendMessageStream = (customText) => {
     const textToSend = customText || input;
     if (!textToSend.trim() || loading) return;
 
+    isUserScrolledUpRef.current = false;
     const userMessage = { id: Date.now(), role: 'user', text: textToSend };
     const botMessageId = Date.now() + 1;
 
@@ -139,12 +240,11 @@ export default function Chatbot() {
     }
 
     const eventSource = new EventSource(streamUrl);
+    activeEventSourceRef.current = eventSource;
 
     eventSource.onmessage = (event) => {
       if (event.data === '[DONE]') {
-        eventSource.close();
-        setLoading(false);
-        fetchSidebarSessions();
+        handleStopGeneration();
         return;
       }
 
@@ -183,96 +283,212 @@ export default function Chatbot() {
       }
     };
 
-    eventSource.onerror = () => {
-      eventSource.close();
-      setLoading(false);
+    eventSource.onerror = (err) => {
+      console.error('Stream error:', err);
+      handleStopGeneration();
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === botMessageId && !msg.text
+            ? { ...msg, text: '⚠️ Connection lost while generating response. Please try again.' }
+            : msg
+        )
+      );
     };
   };
 
-  return (
-    <div className="flex h-screen w-full bg-[#f8fafc] text-slate-800 overflow-hidden font-sans">
-      
-      {/* DESKTOP SIDEBAR */}
-      <aside className="hidden lg:flex flex-col w-64 bg-[#edf3ff]/60 border-r border-slate-200/70 p-4 justify-between select-none">
-        <div className="space-y-2">
-          {/* USER PROFILE CARD */}
-          <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-slate-200/60 shadow-xs mb-2">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-xs tracking-wider">
-                AC
-              </div>
-              <div>
-                <h3 className="font-bold text-xs leading-tight text-slate-900">Alex Chen</h3>
-                <span className="text-[10px] text-slate-500 font-medium">Pro Plan</span>
-              </div>
+  const exportChat = (format) => {
+    let content = '';
+    let filename = `chat-export-${currentSessionId || 'session'}.${format}`;
+
+    if (format === 'json') {
+      content = JSON.stringify(messages, null, 2);
+    } else {
+      content = messages.map((m) => `**${m.role.toUpperCase()}**: ${m.text}\n`).join('\n---\n\n');
+    }
+
+    const blob = new Blob([content], { type: format === 'json' ? 'application/json' : 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    setShowSettingsMenu(false);
+  };
+
+  // Reusable Sidebar Content Component
+  const renderSidebarContent = () => (
+    <div className="flex flex-col h-full justify-between select-none">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-slate-200/60 shadow-xs mb-2">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-xs tracking-wider">
+              AC
             </div>
-            <span className="text-[10px] bg-slate-100 text-slate-500 font-medium px-1.5 py-0.5 rounded">v2.4.0</span>
+            <div>
+              <h3 className="font-bold text-xs leading-tight text-slate-900">Alex Chen</h3>
+              <span className="text-[10px] text-slate-500 font-medium">Pro Plan</span>
+            </div>
           </div>
+          <span className="text-[10px] bg-slate-100 text-slate-500 font-medium px-1.5 py-0.5 rounded">v2.4.0</span>
+        </div>
 
-          {/* NEW CHAT BUTTON */}
-          <button
-            onClick={handleStartNewChat}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-semibold hover:bg-slate-800 transition shadow-xs cursor-pointer mb-2"
-          >
-            <Icon name="plus" className="w-4 h-4" />
-            New Chat
-          </button>
+        <button
+          onClick={handleStartNewChat}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-semibold hover:bg-slate-800 transition shadow-xs cursor-pointer mb-2"
+        >
+          <Icon name="plus" className="w-4 h-4" />
+          New Chat
+        </button>
 
-          {/* MAIN SIDEBAR NAVIGATION */}
-          <nav className="space-y-0.5">
-            {sidebarNavItems.map((item) => (
-              <button
-                key={item.label}
-                onClick={() => setActiveTab(item.label)}
-                className={`w-full flex items-center gap-3 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                  activeTab === item.label
-                    ? 'bg-[#38bdf8] text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:bg-white/60 hover:text-slate-900'
-                }`}
-              >
-                <Icon name={item.icon} className="w-4 h-4" />
-                {item.label}
-              </button>
-            ))}
-          </nav>
+        <nav className="space-y-0.5">
+          {sidebarNavItems.map((item) => (
+            <button
+              key={item.label}
+              onClick={() => {
+                setActiveTab(item.label);
+                setIsMobileDrawerOpen(false);
+              }}
+              className={`w-full flex items-center gap-3 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === item.label
+                  ? 'bg-[#38bdf8] text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:bg-white/60 hover:text-slate-900'
+              }`}
+            >
+              <Icon name={item.icon} className="w-4 h-4" />
+              {item.label}
+            </button>
+          ))}
+        </nav>
 
-          {/* SCROLLABLE RECENT CHATS SECTION */}
-          <div className="pt-3 border-t border-slate-200/60">
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-2 mb-1.5">
-              Recent Chats
-            </p>
-            <div className="space-y-1 max-h-52 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-200">
-              {sidebarSessions.map((session) => {
-                const isActive = currentSessionId === session._id && activeTab === 'Chat';
-                return (
-                  <button
-                    key={session._id}
-                    onClick={() => handleSelectHistorySession(session._id, session.title)}
-                    className={`w-full text-left px-3 py-1.5 rounded-xl text-xs font-medium truncate transition cursor-pointer ${
-                      isActive
-                        ? 'bg-cyan-500/15 text-cyan-800 font-semibold border border-cyan-300/50'
-                        : 'text-slate-600 hover:bg-white/80 hover:text-slate-900'
-                    }`}
-                  >
-                    {session.title || 'Untitled Chat'}
-                  </button>
-                );
-              })}
-            </div>
+        <div className="pt-3 border-t border-slate-200/60">
+          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-2 mb-1.5">
+            Recent Chats
+          </p>
+          <div className="space-y-1 max-h-64 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-200">
+            {sidebarSessions.map((session) => {
+              const isActive = currentSessionId === session._id && activeTab === 'Chat';
+              const isEditing = editingSessionId === session._id;
+
+              return (
+                <div
+                  key={session._id}
+                  className={`group relative flex items-center justify-between px-3 py-1.5 rounded-xl text-xs font-medium transition ${
+                    isActive
+                      ? 'bg-cyan-500/15 text-cyan-800 font-semibold border border-cyan-300/50'
+                      : 'text-slate-600 hover:bg-white/80 hover:text-slate-900'
+                  }`}
+                >
+                  {isEditing ? (
+                    <div className="flex items-center w-full gap-1 z-20">
+                      <input
+                        type="text"
+                        autoFocus
+                        value={editingTitleText}
+                        onChange={(e) => setEditingTitleText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSaveRename(e, session._id);
+                          if (e.key === 'Escape') setEditingSessionId(null);
+                        }}
+                        className="w-full bg-white border border-cyan-400 text-slate-900 px-1.5 py-0.5 rounded outline-none text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={(e) => handleSaveRename(e, session._id)}
+                        className="px-1.5 py-0.5 bg-cyan-500 text-white rounded text-[10px] font-bold cursor-pointer"
+                      >
+                        Save
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <span
+                        onClick={() => handleSelectHistorySession(session._id, session.title)}
+                        className="truncate pr-14 flex-1 cursor-pointer"
+                      >
+                        {session.title || 'Untitled Chat'}
+                      </span>
+                      
+                      <div className="absolute right-2 opacity-0 group-hover:opacity-100 flex items-center gap-1 bg-white/95 p-0.5 rounded-lg shadow-xs transition-opacity z-10">
+                        <button
+                          type="button"
+                          onClick={(e) => handleStartRename(e, session)}
+                          className="p-1 text-slate-400 hover:text-cyan-600 transition cursor-pointer"
+                          title="Rename"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteSession(e, session._id)}
+                          className="p-1 text-slate-400 hover:text-red-600 transition cursor-pointer"
+                          title="Delete"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex h-screen w-full bg-[#f8fafc] text-slate-800 overflow-hidden font-sans relative">
+      {/* COPY TOAST NOTIFICATION */}
+      {showCopyToast && (
+        <div className="fixed top-4 right-4 z-50 bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-lg border border-slate-700 flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
+          <span>✓ Code copied to clipboard</span>
+        </div>
+      )}
+
+      {/* DESKTOP SIDEBAR */}
+      <aside className="hidden lg:flex flex-col w-64 bg-[#edf3ff]/60 border-r border-slate-200/70 p-4 shrink-0">
+        {renderSidebarContent()}
       </aside>
+
+      {/* MOBILE DRAWER OVERLAY */}
+      {isMobileDrawerOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 flex">
+          <div
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs transition-opacity"
+            onClick={() => setIsMobileDrawerOpen(false)}
+          />
+          <aside className="relative w-72 max-w-[80%] bg-[#edf3ff] p-4 flex flex-col h-full z-10 shadow-xl border-r border-slate-200 animate-in slide-in-from-left duration-200">
+            <button
+              onClick={() => setIsMobileDrawerOpen(false)}
+              className="absolute top-3 right-3 p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
+            >
+              ✕
+            </button>
+            {renderSidebarContent()}
+          </aside>
+        </div>
+      )}
 
       {/* MAIN CONTENT AREA */}
       <main className="flex-1 flex flex-col h-full bg-white relative overflow-hidden">
         {/* HEADER */}
-        <header className="h-16 border-b border-slate-100 px-6 flex items-center justify-between bg-white z-10 shrink-0 relative">
+        <header className="h-16 border-b border-slate-100 px-4 sm:px-6 flex items-center justify-between bg-white z-10 shrink-0 relative">
           <div className="flex items-center gap-3">
+            {/* MOBILE DRAWER TOGGLE BUTTON */}
+            <button
+              onClick={() => setIsMobileDrawerOpen(true)}
+              className="lg:hidden p-2 text-slate-500 hover:text-slate-800 rounded-lg border border-slate-200"
+            >
+              <Icon name="chat" className="w-5 h-5" />
+            </button>
+
             <div className="w-8 h-8 rounded-full bg-cyan-100 text-cyan-600 flex items-center justify-center font-bold text-sm">
               🤖
             </div>
             <div>
-              <h1 className="text-lg font-bold text-slate-900">
+              <h1 className="text-base sm:text-lg font-bold text-slate-900 truncate max-w-[180px] sm:max-w-xs">
                 {currentSessionTitle || 'TOPSON AI Assistance'}
               </h1>
               {currentSessionId && (
@@ -320,7 +536,11 @@ export default function Chatbot() {
 
           {activeTab === 'Chat' && (
             <div className="flex flex-col h-full">
-              <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-6 bg-[#f8fafc]/40">
+              <div
+                ref={chatContainerRef}
+                onScroll={handleScroll}
+                className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-6 bg-[#f8fafc]/40"
+              >
                 {historyLoading ? (
                   <div className="flex items-center justify-center h-48 text-slate-400 text-sm font-medium">
                     Loading conversation thread...
@@ -349,7 +569,10 @@ export default function Chatbot() {
                           }`}
                         >
                           {msg.role === 'bot' ? (
-                            <MarkdownRenderer content={msg.text} />
+                            <MarkdownRenderer
+                              content={msg.text}
+                              onCopySuccess={() => setShowCopyToast(true)}
+                            />
                           ) : (
                             <p className="whitespace-pre-wrap">{msg.text}</p>
                           )}
@@ -374,8 +597,9 @@ export default function Chatbot() {
                     {suggestionChips.map((chip) => (
                       <button
                         key={chip}
+                        disabled={loading}
                         onClick={() => sendMessageStream(chip)}
-                        className="px-4 py-1.5 bg-slate-50 border border-slate-200/80 text-slate-700 rounded-full text-xs font-semibold whitespace-nowrap hover:bg-slate-100 hover:border-slate-300 transition cursor-pointer"
+                        className="px-4 py-1.5 bg-slate-50 border border-slate-200/80 text-slate-700 rounded-full text-xs font-semibold whitespace-nowrap hover:bg-slate-100 hover:border-slate-300 transition cursor-pointer disabled:opacity-50"
                       >
                         {chip}
                       </button>
@@ -383,7 +607,14 @@ export default function Chatbot() {
                   </div>
 
                   <form
-                    onSubmit={(e) => { e.preventDefault(); sendMessageStream(); }}
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (loading) {
+                        handleStopGeneration();
+                      } else {
+                        sendMessageStream();
+                      }
+                    }}
                     className="bg-slate-50 border border-slate-200 rounded-full p-1.5 flex items-center gap-1.5 shadow-xs focus-within:border-cyan-400 focus-within:ring-2 focus-within:ring-cyan-100 transition"
                   >
                     <button type="button" className="p-2 text-slate-400 hover:text-slate-600 transition rounded-full cursor-pointer">
@@ -394,25 +625,37 @@ export default function Chatbot() {
                       type="text"
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
-                      placeholder="Message TOPSON AI Assistance..."
-                      className="flex-1 bg-transparent px-2 text-slate-900 text-sm sm:text-base placeholder:text-slate-400 outline-none"
+                      placeholder={loading ? "Generating response..." : "Message TOPSON AI Assistance..."}
+                      disabled={loading}
+                      className="flex-1 bg-transparent px-2 text-slate-900 text-sm sm:text-base placeholder:text-slate-400 outline-none disabled:opacity-60"
                     />
 
                     <button type="button" className="p-2 text-slate-400 hover:text-slate-600 transition rounded-full cursor-pointer">
                       <Icon name="mic" className="w-5 h-5" />
                     </button>
 
-                    <button
-                      type="submit"
-                      disabled={!input.trim() || loading}
-                      className={`p-2.5 rounded-full transition ${
-                        input.trim() && !loading
-                          ? 'bg-cyan-400 text-white shadow-xs hover:bg-cyan-500 cursor-pointer' 
-                          : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                      }`}
-                    >
-                      <Icon name="send" className="w-4 h-4" />
-                    </button>
+                    {loading ? (
+                      <button
+                        type="button"
+                        onClick={handleStopGeneration}
+                        title="Stop response"
+                        className="p-2.5 rounded-full bg-red-500 hover:bg-red-600 text-white transition cursor-pointer shadow-xs"
+                      >
+                        <div className="w-3.5 h-3.5 bg-white rounded-xs" />
+                      </button>
+                    ) : (
+                      <button
+                        type="submit"
+                        disabled={!input.trim()}
+                        className={`p-2.5 rounded-full transition ${
+                          input.trim()
+                            ? 'bg-cyan-400 text-white shadow-xs hover:bg-cyan-500 cursor-pointer' 
+                            : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                        }`}
+                      >
+                        <Icon name="send" className="w-4 h-4" />
+                      </button>
+                    )}
                   </form>
 
                   <p className="text-[11px] text-center text-slate-400 hidden sm:block">
@@ -422,22 +665,6 @@ export default function Chatbot() {
               </div>
             </div>
           )}
-        </div>
-
-        {/* ALWAYS-VISIBLE MOBILE BOTTOM NAVIGATION BAR */}
-        <div className="lg:hidden bg-white border-t border-slate-200 px-4 py-2 flex justify-around items-center shrink-0 z-20 shadow-md">
-          {sidebarNavItems.slice(0, 4).map((item) => (
-            <button
-              key={item.label}
-              onClick={() => setActiveTab(item.label)}
-              className={`flex flex-col items-center gap-1 p-2 rounded-xl transition ${
-                activeTab === item.label ? 'text-cyan-600 font-bold' : 'text-slate-400 font-normal hover:text-slate-600'
-              }`}
-            >
-              <Icon name={item.icon} className="w-5 h-5" />
-              <span className="text-[11px] leading-none">{item.label}</span>
-            </button>
-          ))}
         </div>
       </main>
     </div>

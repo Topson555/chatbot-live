@@ -4,12 +4,13 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
-const CodeBlock = ({ language, value }) => {
+const CodeBlock = ({ language, value, onCopySuccess }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(value);
     setCopied(true);
+    if (onCopySuccess) onCopySuccess();
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -37,7 +38,7 @@ const CodeBlock = ({ language, value }) => {
   );
 };
 
-export const MarkdownRenderer = ({ content }) => {
+export const MarkdownRenderer = ({ content, onCopySuccess }) => {
   if (!content) return null;
 
   return (
@@ -52,7 +53,11 @@ export const MarkdownRenderer = ({ content }) => {
           const isBlockCode = !inline && (match || codeString.includes('\n'));
 
           return isBlockCode ? (
-            <CodeBlock language={match ? match[1] : 'text'} value={codeString} />
+            <CodeBlock
+              language={match ? match[1] : 'text'}
+              value={codeString}
+              onCopySuccess={onCopySuccess}
+            />
           ) : (
             <code
               className="bg-cyan-100/60 text-cyan-900 px-1.5 py-0.5 rounded text-xs font-mono font-medium"
