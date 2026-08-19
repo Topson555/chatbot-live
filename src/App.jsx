@@ -25,8 +25,10 @@ export default function Chatbot() {
   const [currentSessionTitle, setCurrentSessionTitle] = useState(null);
   const [sidebarSessions, setSidebarSessions] = useState([]);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const [showCopyToast, setShowCopyToast] = useState(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
+
+  // Dynamic Toast Notification State
+  const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
 
   // Session rename/edit state
   const [editingSessionId, setEditingSessionId] = useState(null);
@@ -44,13 +46,23 @@ export default function Chatbot() {
   const chatEndRef = useRef(null);
   const activeEventSourceRef = useRef(null);
   const isUserScrolledUpRef = useRef(false);
+  
+  // Ref to hold the input element for session renaming
+  const renameInputRef = useRef(null);
 
+  // Helper to trigger toast messages
+  const showToast = (message, type = 'info') => {
+    setToast({ visible: true, message, type });
+    setTimeout(() => setToast({ visible: false, message: '', type: 'info' }), 3000);
+  };
+
+  // Auto-select text only once when edit mode starts
   useEffect(() => {
-    if (showCopyToast) {
-      const timer = setTimeout(() => setShowCopyToast(false), 2500);
-      return () => clearTimeout(timer);
+    if (editingSessionId && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
     }
-  }, [showCopyToast]);
+  }, [editingSessionId]);
 
   const fetchSidebarSessions = async () => {
     try {
@@ -98,7 +110,6 @@ export default function Chatbot() {
     setCurrentSessionId(sessionId);
     setCurrentSessionTitle(title || `Session ${sessionId.slice(-4)}`);
     setActiveTab('Chat');
-    setActiveTab('Chat');
     setHistoryLoading(true);
     setIsMobileDrawerOpen(false);
 
@@ -120,6 +131,7 @@ export default function Chatbot() {
       }
     } catch (err) {
       console.error('Failed to load session messages:', err);
+      showToast("Failed to load session messages", "error");
       setMessages([
         { id: Date.now(), role: 'bot', text: "Failed to load session messages. Please check server connection." },
       ]);
@@ -128,7 +140,6 @@ export default function Chatbot() {
     }
   };
 
-  // Fixed Delete Handler
   const handleDeleteSession = async (e, sessionId) => {
     if (e) {
       e.stopPropagation();
@@ -136,6 +147,11 @@ export default function Chatbot() {
     }
 
     if (!window.confirm("Are you sure you want to delete this chat session?")) return;
+
+    // Safely stop stream if user deletes active session during generation
+    if (currentSessionId === sessionId && activeEventSourceRef.current) {
+      handleStopGeneration();
+    }
 
     try {
       const res = await fetch(`http://localhost:5000/api/chat/sessions/${sessionId}`, {
@@ -146,19 +162,20 @@ export default function Chatbot() {
 
       if (res.ok && data.success) {
         setSidebarSessions((prev) => prev.filter((s) => s._id !== sessionId));
+        showToast("Session deleted successfully", "success");
 
         if (currentSessionId === sessionId) {
           handleStartNewChat();
         }
       } else {
-        console.error("Delete failed on server:", data.error || data.message);
+        showToast(data.error || "Delete failed on server", "error");
       }
     } catch (err) {
       console.error("Failed to delete session:", err);
+      showToast("Server error during deletion", "error");
     }
   };
 
-  // Fixed Rename Start Handler
   const handleStartRename = (e, session) => {
     if (e) {
       e.stopPropagation();
@@ -168,7 +185,6 @@ export default function Chatbot() {
     setEditingTitleText(session.title || 'Untitled Chat');
   };
 
-  // Fixed Save Rename Handler
   const handleSaveRename = async (e, sessionId) => {
     if (e) {
       e.stopPropagation();
@@ -197,11 +213,13 @@ export default function Chatbot() {
         if (currentSessionId === sessionId) {
           setCurrentSessionTitle(editingTitleText.trim());
         }
+        showToast("Session renamed", "success");
       } else {
-        console.error("Rename failed on server:", data.error || data.message);
+        showToast(data.error || "Rename failed", "error");
       }
     } catch (err) {
       console.error("Failed to rename session:", err);
+      showToast("Server error during rename", "error");
     } finally {
       setEditingSessionId(null);
     }
@@ -286,6 +304,7 @@ export default function Chatbot() {
     eventSource.onerror = (err) => {
       console.error('Stream error:', err);
       handleStopGeneration();
+      showToast("Connection lost during streaming", "error");
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === botMessageId && !msg.text
@@ -314,9 +333,9 @@ export default function Chatbot() {
     a.click();
     URL.revokeObjectURL(url);
     setShowSettingsMenu(false);
+    showToast(`Exported as ${format.toUpperCase()}`, "success");
   };
 
-  // Reusable Sidebar Content Component
   const renderSidebarContent = () => (
     <div className="flex flex-col h-full justify-between select-none">
       <div className="space-y-2">
@@ -383,9 +402,10 @@ export default function Chatbot() {
                     <div className="flex items-center w-full gap-1 z-20">
                       <input
                         type="text"
-                        autoFocus
+                        ref={renameInputRef}
                         value={editingTitleText}
                         onChange={(e) => setEditingTitleText(e.target.value)}
+                        onBlur={(e) => handleSaveRename(e, session._id)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') handleSaveRename(e, session._id);
                           if (e.key === 'Escape') setEditingSessionId(null);
@@ -394,6 +414,7 @@ export default function Chatbot() {
                       />
                       <button
                         type="button"
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={(e) => handleSaveRename(e, session._id)}
                         className="px-1.5 py-0.5 bg-cyan-500 text-white rounded text-[10px] font-bold cursor-pointer"
                       >
@@ -408,7 +429,7 @@ export default function Chatbot() {
                       >
                         {session.title || 'Untitled Chat'}
                       </span>
-                      
+
                       <div className="absolute right-2 opacity-0 group-hover:opacity-100 flex items-center gap-1 bg-white/95 p-0.5 rounded-lg shadow-xs transition-opacity z-10">
                         <button
                           type="button"
@@ -440,19 +461,23 @@ export default function Chatbot() {
 
   return (
     <div className="flex h-screen w-full bg-[#f8fafc] text-slate-800 overflow-hidden font-sans relative">
-      {/* COPY TOAST NOTIFICATION */}
-      {showCopyToast && (
-        <div className="fixed top-4 right-4 z-50 bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-lg border border-slate-700 flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
-          <span>✓ Code copied to clipboard</span>
+      {/* Toast Notification Container */}
+      {toast.visible && (
+        <div className={`fixed top-4 right-4 z-50 text-xs font-semibold px-4 py-2.5 rounded-xl shadow-lg border flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200 ${
+          toast.type === 'error' 
+            ? 'bg-red-900 text-white border-red-700' 
+            : toast.type === 'success'
+            ? 'bg-emerald-900 text-white border-emerald-700'
+            : 'bg-slate-900 text-white border-slate-700'
+        }`}>
+          <span>{toast.type === 'error' ? '❌' : toast.type === 'success' ? '✓' : 'ℹ️'} {toast.message}</span>
         </div>
       )}
 
-      {/* DESKTOP SIDEBAR */}
       <aside className="hidden lg:flex flex-col w-64 bg-[#edf3ff]/60 border-r border-slate-200/70 p-4 shrink-0">
         {renderSidebarContent()}
       </aside>
 
-      {/* MOBILE DRAWER OVERLAY */}
       {isMobileDrawerOpen && (
         <div className="lg:hidden fixed inset-0 z-50 flex">
           <div
@@ -471,12 +496,9 @@ export default function Chatbot() {
         </div>
       )}
 
-      {/* MAIN CONTENT AREA */}
       <main className="flex-1 flex flex-col h-full bg-white relative overflow-hidden">
-        {/* HEADER */}
         <header className="h-16 border-b border-slate-100 px-4 sm:px-6 flex items-center justify-between bg-white z-10 shrink-0 relative">
           <div className="flex items-center gap-3">
-            {/* MOBILE DRAWER TOGGLE BUTTON */}
             <button
               onClick={() => setIsMobileDrawerOpen(true)}
               className="lg:hidden p-2 text-slate-500 hover:text-slate-800 rounded-lg border border-slate-200"
@@ -524,7 +546,6 @@ export default function Chatbot() {
           </div>
         </header>
 
-        {/* DYNAMIC VIEWS CONTAINER */}
         <div className="flex-1 overflow-y-auto">
           {activeTab === 'Chat History' && (
             <ChatHistoryView onSelectSession={handleSelectHistorySession} />
@@ -571,7 +592,7 @@ export default function Chatbot() {
                           {msg.role === 'bot' ? (
                             <MarkdownRenderer
                               content={msg.text}
-                              onCopySuccess={() => setShowCopyToast(true)}
+                              onCopySuccess={() => showToast("Code copied to clipboard", "success")}
                             />
                           ) : (
                             <p className="whitespace-pre-wrap">{msg.text}</p>
@@ -590,7 +611,6 @@ export default function Chatbot() {
                 <div ref={chatEndRef} />
               </div>
 
-              {/* INPUT BAR */}
               <div className="p-4 sm:p-6 bg-white border-t border-slate-100 shrink-0">
                 <div className="max-w-3xl mx-auto space-y-3">
                   <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
