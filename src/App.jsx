@@ -148,7 +148,6 @@ export default function Chatbot() {
 
     if (!window.confirm("Are you sure you want to delete this chat session?")) return;
 
-    // Safely stop stream if user deletes active session during generation
     if (currentSessionId === sessionId && activeEventSourceRef.current) {
       handleStopGeneration();
     }
@@ -342,11 +341,11 @@ export default function Chatbot() {
         <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-slate-200/60 shadow-xs mb-2">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-xs tracking-wider">
-              AC
+              EM
             </div>
             <div>
-              <h3 className="font-bold text-xs leading-tight text-slate-900">Alex Chen</h3>
-              <span className="text-[10px] text-slate-500 font-medium">Pro Plan</span>
+              <h3 className="font-bold text-xs leading-tight text-slate-900">Emmanuel</h3>
+              <span className="text-[10px] text-slate-500 font-medium">Developer</span>
             </div>
           </div>
           <span className="text-[10px] bg-slate-100 text-slate-500 font-medium px-1.5 py-0.5 rounded">v2.4.0</span>
@@ -611,7 +610,7 @@ export default function Chatbot() {
                 <div ref={chatEndRef} />
               </div>
 
-              <div className="p-4 sm:p-6 bg-white border-t border-slate-100 shrink-0">
+              <div className="p-4 sm:p-6 bg-[#f8fafc]/40 border-t border-slate-100 shrink-0">
                 <div className="max-w-3xl mx-auto space-y-3">
                   <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
                     {suggestionChips.map((chip) => (
