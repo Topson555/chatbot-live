@@ -17,20 +17,25 @@ export default function ChatInput({ onSendMessage, onFileUpload }) {
 
   useEffect(() => {
     return () => {
-      if (recognitionRef.current) recognitionRef.current.stop();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {
+          // ignore cleanup errors
+        }
+      }
     };
   }, []);
 
   // 1. Paperclip Handler
   const handlePaperclipClick = (e) => {
-    e.preventDefault();
     e.stopPropagation();
     setDebugStatus('Paperclip clicked');
 
     if (fileInputRef.current) {
       fileInputRef.current.click();
     } else {
-      alert('File input reference not ready.');
+      setDebugStatus('Error: File input ref missing');
     }
   };
 
@@ -42,7 +47,6 @@ export default function ChatInput({ onSendMessage, onFileUpload }) {
     setIsUploading(true);
     setDebugStatus(`Processing file: ${file.name}`);
 
-    // Read image files as base64 for inline multimodal handling
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -65,7 +69,6 @@ export default function ChatInput({ onSendMessage, onFileUpload }) {
       return;
     }
 
-    // Process PDF/Text documents via backend RAG upload endpoint
     const formData = new FormData();
     formData.append('file', file);
 
@@ -99,19 +102,22 @@ export default function ChatInput({ onSendMessage, onFileUpload }) {
 
   // 3. Speech Recognition Handler
   const handleMicClick = (e) => {
-    e.preventDefault();
     e.stopPropagation();
     setDebugStatus('Microphone clicked');
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      alert('Speech Recognition requires Google Chrome or MS Edge on Desktop.');
+      alert('Speech Recognition is not supported by your browser. Please use Chrome or MS Edge.');
       return;
     }
 
     if (isListening && recognitionRef.current) {
-      recognitionRef.current.stop();
+      try {
+        recognitionRef.current.stop();
+      } catch (err) {
+        console.error(err);
+      }
       setIsListening(false);
       setDebugStatus('Voice listening stopped');
       return;
@@ -139,7 +145,7 @@ export default function ChatInput({ onSendMessage, onFileUpload }) {
         setIsListening(false);
         setDebugStatus(`Speech error: ${event.error}`);
         if (event.error === 'not-allowed') {
-          alert('Microphone access is blocked. Click the lock/tune icon next to the address bar URL to allow permissions.');
+          alert('Microphone access is blocked. Please check browser permissions in address bar.');
         }
       };
 
@@ -150,8 +156,9 @@ export default function ChatInput({ onSendMessage, onFileUpload }) {
       recognitionRef.current = recognition;
       recognition.start();
     } catch (err) {
-      console.error('Mic initialization exception:', err);
+      console.error('Mic initialization error:', err);
       setIsListening(false);
+      setDebugStatus(`Mic error: ${err.message}`);
     }
   };
 
@@ -173,24 +180,21 @@ export default function ChatInput({ onSendMessage, onFileUpload }) {
   };
 
   return (
-    <div className="relative z-50 w-full max-w-4xl mx-auto p-2">
-      {/* Hidden File Input */}
+    <div className="relative z-50 w-full max-w-4xl mx-auto p-2 pointer-events-auto">
       <input
         type="file"
         ref={fileInputRef}
         onChange={handleFileChange}
         accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.webp"
-        style={{ display: 'none' }}
+        className="hidden"
       />
 
-      {/* Optional Debug Status Bar */}
       {debugStatus && (
         <div className="mb-1 text-xs text-cyan-700 bg-cyan-50 px-2 py-0.5 rounded border border-cyan-200 w-fit">
           Status: {debugStatus}
         </div>
       )}
 
-      {/* Selected File Badge */}
       {selectedFile && (
         <div className="mb-2 flex items-center gap-2 bg-cyan-50 text-cyan-800 px-3 py-1.5 rounded-lg text-sm w-fit border border-cyan-200 shadow-sm">
           {selectedFile.type === 'image' ? <ImageIcon size={16} /> : <FileText size={16} />}
@@ -198,30 +202,27 @@ export default function ChatInput({ onSendMessage, onFileUpload }) {
           <button
             type="button"
             onClick={() => setSelectedFile(null)}
-            className="ml-2 text-cyan-600 font-bold hover:text-cyan-900"
+            className="ml-2 text-cyan-600 font-bold hover:text-cyan-900 cursor-pointer"
           >
             ×
           </button>
         </div>
       )}
 
-      {/* Input Bar Form Wrapper */}
       <form
         onSubmit={handleSubmit}
-        className="flex items-center gap-2 border border-cyan-400 rounded-full px-4 py-2 shadow-sm bg-white pointer-events-auto"
+        className="flex items-center gap-2 border border-cyan-400 rounded-full px-4 py-2 shadow-sm bg-white pointer-events-auto relative z-10"
       >
-        {/* Paperclip Button */}
         <button
           type="button"
           onClick={handlePaperclipClick}
           disabled={isUploading}
-          className="cursor-pointer text-gray-500 hover:text-cyan-600 p-2 rounded-full transition-colors flex-shrink-0 disabled:opacity-50"
+          className="cursor-pointer text-gray-500 hover:text-cyan-600 p-2 rounded-full transition-colors flex-shrink-0 disabled:opacity-50 relative z-20"
           title="Upload file or image"
         >
           {isUploading ? <Loader2 size={20} className="animate-spin text-cyan-500" /> : <Paperclip size={20} />}
         </button>
 
-        {/* Text Input */}
         <input
           type="text"
           value={text}
@@ -230,11 +231,10 @@ export default function ChatInput({ onSendMessage, onFileUpload }) {
           className="flex-1 bg-transparent border-none outline-none text-gray-700 placeholder-gray-400 px-2 text-sm md:text-base"
         />
 
-        {/* Microphone Button */}
         <button
           type="button"
           onClick={handleMicClick}
-          className={`cursor-pointer p-2 rounded-full transition-colors flex-shrink-0 ${
+          className={`cursor-pointer p-2 rounded-full transition-colors flex-shrink-0 relative z-20 ${
             isListening ? 'text-red-500 bg-red-100 animate-pulse' : 'text-gray-500 hover:text-cyan-600'
           }`}
           title={isListening ? 'Stop recording' : 'Start voice input'}
@@ -242,11 +242,10 @@ export default function ChatInput({ onSendMessage, onFileUpload }) {
           {isListening ? <MicOff size={20} /> : <Mic size={20} />}
         </button>
 
-        {/* Send Button */}
         {(text.trim() || selectedFile) && (
           <button
             type="submit"
-            className="cursor-pointer text-white bg-cyan-500 hover:bg-cyan-600 p-2 rounded-full transition-colors shadow-sm flex-shrink-0"
+            className="cursor-pointer text-white bg-cyan-500 hover:bg-cyan-600 p-2 rounded-full transition-colors shadow-sm flex-shrink-0 relative z-20"
           >
             <Send size={18} />
           </button>
