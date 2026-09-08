@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Icon } from './components/Icon';
 import { ResponseTrackCards } from './components/ResponseTrackCards';
 import { ChatHistoryView, KnowledgeBaseView, ApiKeysView, SystemStatusView } from './components/Views';
 import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { ThinkingIndicator } from './components/ThinkingIndicator';
+import { useChatStream } from './hooks/useChatStream';
 
 const suggestionChips = [
   "Summarize my day",
@@ -21,42 +22,127 @@ const sidebarNavItems = [
 
 export default function Chatbot() {
   const [activeTab, setActiveTab] = useState('Chat');
-  const [currentSessionId, setCurrentSessionId] = useState(null);
   const [currentSessionTitle, setCurrentSessionTitle] = useState(null);
   const [sidebarSessions, setSidebarSessions] = useState([]);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
 
-  // Dynamic Toast Notification State
+  // File & Image state
+  const [selectedFilePayload, setSelectedFilePayload] = useState(null);
+
+  // Custom Streaming & Recovery Hook (Now destructuring cancelStream)
+  const {
+    messages,
+    setMessages,
+    sendMessage,
+    cancelStream,
+    retryLastMessage,
+    isStreaming,
+    currentSessionId,
+  } = useChatStream('http://localhost:5000');
+
+  // Voice recognition state
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef(null);
+
+  // Toast Notification State
   const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
 
   // Session rename/edit state
   const [editingSessionId, setEditingSessionId] = useState(null);
   const [editingTitleText, setEditingTitleText] = useState('');
 
-  const [messages, setMessages] = useState([
-    { id: 1, role: 'bot', text: "Hello! I'm TOPSON AI Assistance. How can I help streamline your workflow today?" },
-  ]);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [thinkingStep, setThinkingStep] = useState('Analyzing request...');
 
   const chatContainerRef = useRef(null);
   const chatEndRef = useRef(null);
-  const activeEventSourceRef = useRef(null);
   const isUserScrolledUpRef = useRef(false);
-  
-  // Ref to hold the input element for session renaming
   const renameInputRef = useRef(null);
 
-  // Helper to trigger toast messages
   const showToast = (message, type = 'info') => {
     setToast({ visible: true, message, type });
     setTimeout(() => setToast({ visible: false, message: '', type: 'info' }), 3000);
   };
 
-  // Auto-select text only once when edit mode starts
+  // Image & Document Upload Handler
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64Data = reader.result.split(',')[1];
+        setSelectedFilePayload({
+          filename: file.name,
+          type: 'image',
+          previewUrl: reader.result,
+          inlineData: {
+            data: base64Data,
+            mimeType: file.type,
+          },
+        });
+        showToast(`Attached image: ${file.name}`, 'info');
+      };
+      reader.readAsDataURL(file);
+      e.target.value = '';
+    } else {
+      showToast(`Selected file: ${file.name}`, 'info');
+      e.target.value = '';
+    }
+  };
+
+  // Microphone / Speech Recognition Handler
+  const toggleSpeechRecognition = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      showToast('Speech recognition is not supported in this browser.', 'error');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        showToast('Listening... Speak now', 'info');
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = Array.from(event.results)
+          .map((result) => result[0].transcript)
+          .join('');
+        setInput(transcript);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListening(false);
+        showToast(`Mic error: ${event.error}`, 'error');
+      };
+
+      recognition.onend = () => setIsListening(false);
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error('Failed to start speech recognition:', err);
+      setIsListening(false);
+      showToast('Could not access microphone', 'error');
+    }
+  };
+
   useEffect(() => {
     if (editingSessionId && renameInputRef.current) {
       renameInputRef.current.focus();
@@ -81,33 +167,32 @@ export default function Chatbot() {
     fetchSidebarSessions();
   }, [currentSessionId]);
 
+  // SMART SCROLL: Detect manual scroll actions
   const handleScroll = () => {
     if (!chatContainerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
-    const isBottom = scrollHeight - scrollTop - clientHeight < 100;
-    isUserScrolledUpRef.current = !isBottom;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 80;
+    isUserScrolledUpRef.current = !isAtBottom;
   };
 
+  // SMART SCROLL: Scroll to bottom while streaming unless user scrolled up
   useEffect(() => {
     if (!isUserScrolledUpRef.current) {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, loading, thinkingStep]);
+  }, [messages, isStreaming]);
 
   const handleStartNewChat = () => {
-    handleStopGeneration();
-    setCurrentSessionId(null);
-    setCurrentSessionTitle(null);
     setMessages([
-      { id: Date.now(), role: 'bot', text: "Hello! Started a fresh conversation thread. What are we working on?" },
+      { id: Date.now(), role: 'model', content: "Hello! Started a fresh conversation thread. What are we working on?" },
     ]);
+    setCurrentSessionTitle(null);
+    setSelectedFilePayload(null);
     setActiveTab('Chat');
     setIsMobileDrawerOpen(false);
   };
 
   const handleSelectHistorySession = async (sessionId, title) => {
-    handleStopGeneration();
-    setCurrentSessionId(sessionId);
     setCurrentSessionTitle(title || `Session ${sessionId.slice(-4)}`);
     setActiveTab('Chat');
     setHistoryLoading(true);
@@ -120,21 +205,18 @@ export default function Chatbot() {
       if (data.success && Array.isArray(data.messages) && data.messages.length > 0) {
         const formattedMessages = data.messages.map((msg, index) => ({
           id: msg._id || index,
-          role: msg.role === 'user' ? 'user' : 'bot',
-          text: msg.content,
+          role: msg.role === 'user' ? 'user' : 'model',
+          content: msg.content,
         }));
         setMessages(formattedMessages);
       } else {
         setMessages([
-          { id: Date.now(), role: 'bot', text: `Loaded thread: "${title || 'Untitled Session'}". Continue conversation below!` },
+          { id: Date.now(), role: 'model', content: `Loaded thread: "${title || 'Untitled Session'}". Continue conversation below!` },
         ]);
       }
     } catch (err) {
       console.error('Failed to load session messages:', err);
       showToast("Failed to load session messages", "error");
-      setMessages([
-        { id: Date.now(), role: 'bot', text: "Failed to load session messages. Please check server connection." },
-      ]);
     } finally {
       setHistoryLoading(false);
     }
@@ -147,10 +229,6 @@ export default function Chatbot() {
     }
 
     if (!window.confirm("Are you sure you want to delete this chat session?")) return;
-
-    if (currentSessionId === sessionId && activeEventSourceRef.current) {
-      handleStopGeneration();
-    }
 
     try {
       const res = await fetch(`http://localhost:5000/api/chat/sessions/${sessionId}`, {
@@ -224,94 +302,24 @@ export default function Chatbot() {
     }
   };
 
-  const handleStopGeneration = () => {
-    if (activeEventSourceRef.current) {
-      activeEventSourceRef.current.close();
-      activeEventSourceRef.current = null;
-      setLoading(false);
-      fetchSidebarSessions();
-    }
-  };
+  const handleFormSubmit = (e) => {
+    e?.preventDefault();
+    if ((!input.trim() && !selectedFilePayload) || isStreaming) return;
 
-  const sendMessageStream = (customText) => {
-    const textToSend = customText || input;
-    if (!textToSend.trim() || loading) return;
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    }
 
     isUserScrolledUpRef.current = false;
-    const userMessage = { id: Date.now(), role: 'user', text: textToSend };
-    const botMessageId = Date.now() + 1;
 
-    setMessages((prev) => [...prev, userMessage]);
+    sendMessage({
+      message: input,
+      image: selectedFilePayload?.type === 'image' ? selectedFilePayload.inlineData : null,
+    });
+
     setInput('');
-    setLoading(true);
-    setThinkingStep('Analyzing request...');
-
-    setMessages((prev) => [
-      ...prev,
-      { id: botMessageId, role: 'bot', text: '' }
-    ]);
-
-    let streamUrl = `http://localhost:5000/api/chat/stream?prompt=${encodeURIComponent(textToSend)}`;
-    if (currentSessionId) {
-      streamUrl += `&sessionId=${encodeURIComponent(currentSessionId)}`;
-    }
-
-    const eventSource = new EventSource(streamUrl);
-    activeEventSourceRef.current = eventSource;
-
-    eventSource.onmessage = (event) => {
-      if (event.data === '[DONE]') {
-        handleStopGeneration();
-        return;
-      }
-
-      try {
-        const data = JSON.parse(event.data);
-
-        if (data.type === 'status') {
-          if (data.text) {
-            setThinkingStep(data.text);
-            setLoading(true);
-          } else {
-            setLoading(false);
-          }
-        }
-
-        if (data.type === 'session_meta' && data.sessionId) {
-          setCurrentSessionId(data.sessionId);
-        }
-
-        if (data.type === 'title_update' && data.title) {
-          setCurrentSessionTitle(data.title);
-        }
-
-        if (data.type === 'chunk' && data.text) {
-          setLoading(false);
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === botMessageId
-                ? { ...msg, text: msg.text + data.text }
-                : msg
-            )
-          );
-        }
-      } catch (e) {
-        console.error('Streaming parse error:', e);
-      }
-    };
-
-    eventSource.onerror = (err) => {
-      console.error('Stream error:', err);
-      handleStopGeneration();
-      showToast("Connection lost during streaming", "error");
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === botMessageId && !msg.text
-            ? { ...msg, text: '⚠️ Connection lost while generating response. Please try again.' }
-            : msg
-        )
-      );
-    };
+    setSelectedFilePayload(null);
   };
 
   const exportChat = (format) => {
@@ -321,7 +329,7 @@ export default function Chatbot() {
     if (format === 'json') {
       content = JSON.stringify(messages, null, 2);
     } else {
-      content = messages.map((m) => `**${m.role.toUpperCase()}**: ${m.text}\n`).join('\n---\n\n');
+      content = messages.map((m) => `**${m.role.toUpperCase()}**: ${m.content}\n`).join('\n---\n\n');
     }
 
     const blob = new Blob([content], { type: format === 'json' ? 'application/json' : 'text/markdown' });
@@ -566,47 +574,71 @@ export default function Chatbot() {
                     Loading conversation thread...
                   </div>
                 ) : (
-                  messages.map((msg) => (
-                    <div key={msg.id} className="max-w-3xl mx-auto space-y-1">
-                      {msg.role === 'bot' && (
-                        <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 pl-11 mb-1">
-                          <span>TOPSON AI Assistance</span>
-                        </div>
-                      )}
+                  messages.map((msg, index) => {
+                    const isLastMessage = index === messages.length - 1;
 
-                      <div className={`flex gap-3 items-start ${msg.role === 'user' ? 'justify-end' : ''}`}>
-                        {msg.role === 'bot' && (
-                          <div className="w-8 h-8 rounded-full bg-cyan-50 border border-cyan-100 flex items-center justify-center text-cyan-600 shrink-0 mt-0.5 shadow-xs">
-                            🤖
+                    return (
+                      <div key={msg.id} className="max-w-3xl mx-auto space-y-1">
+                        {msg.role === 'model' && (
+                          <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 pl-11 mb-1">
+                            <span>TOPSON AI Assistance</span>
                           </div>
                         )}
 
-                        <div
-                          className={`px-5 py-3.5 rounded-2xl text-[15px] leading-relaxed max-w-[92%] sm:max-w-[80%] ${
-                            msg.role === 'user'
-                              ? 'bg-[#1b1937] text-white rounded-br-xs shadow-xs'
-                              : 'bg-[#eef8f9] border border-cyan-100 text-slate-900 rounded-bl-xs'
-                          }`}
-                        >
-                          {msg.role === 'bot' ? (
-                            <MarkdownRenderer
-                              content={msg.text}
-                              onCopySuccess={() => showToast("Code copied to clipboard", "success")}
-                            />
-                          ) : (
-                            <p className="whitespace-pre-wrap">{msg.text}</p>
+                        <div className={`flex gap-3 items-start ${msg.role === 'user' ? 'justify-end' : ''}`}>
+                          {msg.role === 'model' && (
+                            <div className="w-8 h-8 rounded-full bg-cyan-50 border border-cyan-100 flex items-center justify-center text-cyan-600 shrink-0 mt-0.5 shadow-xs">
+                              🤖
+                            </div>
                           )}
 
-                          {msg.hasCards && <ResponseTrackCards />}
-                          {msg.followUp && <p className="mt-4 text-slate-800">{msg.followUp}</p>}
+                          <div
+                            className={`px-5 py-3.5 rounded-2xl text-[15px] leading-relaxed max-w-[92%] sm:max-w-[80%] ${
+                              msg.role === 'user'
+                                ? 'bg-[#1b1937] text-white rounded-br-xs shadow-xs'
+                                : 'bg-[#eef8f9] border border-cyan-100 text-slate-900 rounded-bl-xs'
+                            }`}
+                          >
+                            {msg.isLoading ? (
+                              <ThinkingIndicator step="Generating response..." />
+                            ) : msg.role === 'model' ? (
+                              <MarkdownRenderer
+                                content={msg.content}
+                                isStreaming={isStreaming && isLastMessage}
+                                onCopySuccess={() => showToast("Code copied to clipboard", "success")}
+                              />
+                            ) : (
+                              <p className="whitespace-pre-wrap">{msg.content}</p>
+                            )}
+
+                            {/* Error Recovery Inline Retry Button */}
+                            {msg.isError && (
+                              <div className="mt-2 pt-2 border-t border-red-200/40 flex items-center justify-between gap-2">
+                                <span className="text-xs text-red-600 font-medium">{msg.content}</span>
+                                <button
+                                  type="button"
+                                  onClick={retryLastMessage}
+                                  className="px-3 py-1 bg-red-500 text-white hover:bg-red-600 text-xs font-bold rounded-lg transition shadow-xs cursor-pointer shrink-0"
+                                >
+                                  🔄 Retry
+                                </button>
+                              </div>
+                            )}
+
+                            {msg.sources && (
+                              <div className="mt-3 pt-2 border-t border-slate-200/50 text-xs text-slate-500">
+                                <span className="font-semibold text-slate-700">Sources:</span> {msg.sources.join(', ')}
+                              </div>
+                            )}
+
+                            {msg.hasCards && <ResponseTrackCards />}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
 
-                {loading && <ThinkingIndicator step={thinkingStep} />}
-                
                 <div ref={chatEndRef} />
               </div>
 
@@ -616,8 +648,8 @@ export default function Chatbot() {
                     {suggestionChips.map((chip) => (
                       <button
                         key={chip}
-                        disabled={loading}
-                        onClick={() => sendMessageStream(chip)}
+                        disabled={isStreaming}
+                        onClick={() => sendMessage({ message: chip })}
                         className="px-4 py-1.5 bg-slate-50 border border-slate-200/80 text-slate-700 rounded-full text-xs font-semibold whitespace-nowrap hover:bg-slate-100 hover:border-slate-300 transition cursor-pointer disabled:opacity-50"
                       >
                         {chip}
@@ -625,49 +657,85 @@ export default function Chatbot() {
                     ))}
                   </div>
 
+                  {/* Selected Attachment Badge */}
+                  {selectedFilePayload && (
+                    <div className="flex items-center gap-2 bg-slate-100 text-slate-700 px-3 py-1 rounded-lg text-xs w-fit border border-slate-300 shadow-xs">
+                      {selectedFilePayload.type === 'image' && (
+                        <img
+                          src={selectedFilePayload.previewUrl}
+                          alt="preview"
+                          className="w-5 h-5 rounded object-cover"
+                        />
+                      )}
+                      <span className="font-medium truncate max-w-xs">{selectedFilePayload.filename}</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFilePayload(null)}
+                        className="ml-1 text-slate-500 hover:text-red-600 font-bold cursor-pointer"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+
                   <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      if (loading) {
-                        handleStopGeneration();
-                      } else {
-                        sendMessageStream();
-                      }
-                    }}
-                    className="bg-slate-50 border border-slate-200 rounded-full p-1.5 flex items-center gap-1.5 shadow-xs focus-within:border-cyan-400 focus-within:ring-2 focus-within:ring-cyan-100 transition"
+                    onSubmit={handleFormSubmit}
+                    className="bg-slate-50 border border-slate-200 rounded-full p-1.5 flex items-center gap-1.5 shadow-xs focus-within:border-cyan-400 focus-within:ring-2 focus-within:ring-cyan-100 transition relative pointer-events-auto z-10"
                   >
-                    <button type="button" className="p-2 text-slate-400 hover:text-slate-600 transition rounded-full cursor-pointer">
+                    <label
+                      htmlFor="file-upload"
+                      className="p-2 text-slate-400 hover:text-slate-600 transition rounded-full cursor-pointer flex items-center justify-center shrink-0"
+                      title="Upload file or image"
+                    >
                       <Icon name="upload" className="w-5 h-5" />
-                    </button>
-                    
+                      <input
+                        id="file-upload"
+                        type="file"
+                        accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.webp"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                      />
+                    </label>
+
                     <input
                       type="text"
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
-                      placeholder={loading ? "Generating response..." : "Message TOPSON AI Assistance..."}
-                      disabled={loading}
+                      placeholder={isStreaming ? "Generating response..." : isListening ? "Listening..." : "Message TOPSON AI Assistance..."}
+                      disabled={isStreaming}
                       className="flex-1 bg-transparent px-2 text-slate-900 text-sm sm:text-base placeholder:text-slate-400 outline-none disabled:opacity-60"
                     />
 
-                    <button type="button" className="p-2 text-slate-400 hover:text-slate-600 transition rounded-full cursor-pointer">
+                    <button
+                      type="button"
+                      onClick={toggleSpeechRecognition}
+                      disabled={isStreaming}
+                      title={isListening ? "Stop listening" : "Start listening"}
+                      className={`p-2 transition rounded-full cursor-pointer shrink-0 ${
+                        isListening
+                          ? 'bg-red-500 text-white animate-pulse'
+                          : 'text-slate-400 hover:text-slate-600'
+                      }`}
+                    >
                       <Icon name="mic" className="w-5 h-5" />
                     </button>
 
-                    {loading ? (
+                    {/* Swap Send Button for Stop Button while streaming */}
+                    {isStreaming ? (
                       <button
                         type="button"
-                        onClick={handleStopGeneration}
-                        title="Stop response"
-                        className="p-2.5 rounded-full bg-red-500 hover:bg-red-600 text-white transition cursor-pointer shadow-xs"
+                        onClick={cancelStream}
+                        title="Stop generating"
+                        className="p-2.5 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-xs transition cursor-pointer shrink-0 flex items-center justify-center"
                       >
-                        <div className="w-3.5 h-3.5 bg-white rounded-xs" />
+                        <span className="w-3.5 h-3.5 bg-white rounded-xs" />
                       </button>
                     ) : (
                       <button
                         type="submit"
-                        disabled={!input.trim()}
-                        className={`p-2.5 rounded-full transition ${
-                          input.trim()
+                        disabled={(!input.trim() && !selectedFilePayload)}
+                        className={`p-2.5 rounded-full transition shrink-0 ${
+                          input.trim() || selectedFilePayload
                             ? 'bg-cyan-400 text-white shadow-xs hover:bg-cyan-500 cursor-pointer' 
                             : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                         }`}

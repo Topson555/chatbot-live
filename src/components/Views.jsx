@@ -44,7 +44,7 @@ export const ChatHistoryView = ({ onSelectSession }) => {
         <h2 className="text-xl font-bold text-slate-900">Chat History</h2>
         <button
           onClick={fetchSessions}
-          className="text-xs font-semibold text-cyan-600 hover:text-cyan-700 transition"
+          className="text-xs font-semibold text-cyan-600 hover:text-cyan-700 transition cursor-pointer"
         >
           Refresh
         </button>
@@ -76,7 +76,7 @@ export const ChatHistoryView = ({ onSelectSession }) => {
               </span>
               <button
                 onClick={(e) => handleDeleteSession(e, item._id)}
-                className="text-xs text-slate-400 hover:text-red-500 transition px-2 py-1 rounded-lg hover:bg-red-50"
+                className="text-xs text-slate-400 hover:text-red-500 transition px-2 py-1 rounded-lg hover:bg-red-50 cursor-pointer"
                 title="Delete Session"
               >
                 Delete
@@ -90,9 +90,27 @@ export const ChatHistoryView = ({ onSelectSession }) => {
 };
 
 export const KnowledgeBaseView = () => {
+  const [documents, setDocuments] = useState([]);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
+
+  // Fetch all documents currently stored in MongoDB
+  const fetchDocuments = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/knowledge');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.docs)) {
+        setDocuments(data.docs);
+      }
+    } catch (err) {
+      console.error('Failed to fetch knowledge base docs:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchDocuments();
+  }, []);
 
   const handleFileUpload = async (files) => {
     if (!files || files.length === 0) return;
@@ -108,8 +126,9 @@ export const KnowledgeBaseView = () => {
         body: formData,
       });
       const data = await res.json();
-      if (res.ok) {
+      if (res.ok && data.success) {
         setStatusMsg(`Successfully ingested: ${files[0].name}`);
+        fetchDocuments(); // Auto-refresh document list after upload
       } else {
         setStatusMsg(`Upload failed: ${data.error || 'Server error'}`);
       }
@@ -120,10 +139,38 @@ export const KnowledgeBaseView = () => {
     }
   };
 
+  const handleDeleteDoc = async (id) => {
+    if (!window.confirm('Delete this document from RAG knowledge base?')) return;
+
+    try {
+      const res = await fetch(`http://localhost:5000/api/knowledge/${id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        fetchDocuments(); // Refresh document list
+      }
+    } catch (err) {
+      console.error('Failed to delete doc:', err);
+    }
+  };
+
+  // Helper to get file icon by extension
+  const getFileIcon = (filename = '') => {
+    const ext = filename.toLowerCase().split('.').pop();
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext)) return '🖼️';
+    if (ext === 'pdf') return '📑';
+    return '📄';
+  };
+
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-4">
-      <h2 className="text-xl font-bold text-slate-900">Knowledge Base</h2>
-      <p className="text-xs text-slate-500">Upload documentation (.pdf, .txt, .json) for RAG context retrieval.</p>
+    <div className="p-6 max-w-4xl mx-auto space-y-6">
+      <div>
+        <h2 className="text-xl font-bold text-slate-900">Knowledge Base</h2>
+        <p className="text-xs text-slate-500 mt-1">
+          Upload documents (.pdf, .txt, .json, .md) or images (.png, .jpg) for RAG context retrieval.
+        </p>
+      </div>
       
       <div
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -138,13 +185,13 @@ export const KnowledgeBaseView = () => {
         } rounded-2xl p-8 text-center space-y-3 transition`}
       >
         <Icon name="knowledge" className="w-8 h-8 mx-auto text-slate-400" />
-        <p className="text-sm font-semibold text-slate-700">Drag & Drop knowledge files here</p>
+        <p className="text-sm font-semibold text-slate-700">Drag & Drop knowledge files or images here</p>
         
         <label className="inline-block px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-xl hover:bg-slate-800 transition cursor-pointer">
-          {uploading ? 'Processing & Vectorizing...' : 'Browse Files'}
+          {uploading ? 'Extracting & Vectorizing...' : 'Browse Files'}
           <input
             type="file"
-            accept=".pdf,.txt,.json"
+            accept=".pdf,.txt,.json,.md,.png,.jpg,.jpeg,.webp,text/plain,application/json,application/pdf,image/*"
             className="hidden"
             onChange={(e) => handleFileUpload(e.target.files)}
             disabled={uploading}
@@ -153,10 +200,54 @@ export const KnowledgeBaseView = () => {
       </div>
 
       {statusMsg && (
-        <p className={`text-xs font-medium text-center ${statusMsg.includes('Successfully') ? 'text-emerald-600' : 'text-red-500'}`}>
+        <p className={`text-xs font-semibold text-center p-2.5 rounded-xl ${
+          statusMsg.includes('Successfully')
+            ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+            : 'bg-red-50 text-red-600 border border-red-200'
+        }`}>
           {statusMsg}
         </p>
       )}
+
+      {/* Indexed Context Documents Section */}
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+        <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
+          <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+            Indexed Context Documents ({documents.length})
+          </h3>
+        </div>
+        <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+          {documents.length === 0 ? (
+            <p className="p-4 text-xs text-slate-400 text-center font-medium">
+              No knowledge documents indexed yet. Upload a file or image above to enable RAG.
+            </p>
+          ) : (
+            documents.map((doc) => (
+              <div
+                key={doc._id}
+                className="p-3.5 flex items-center justify-between text-xs hover:bg-slate-50/80 transition"
+              >
+                <div className="flex items-center gap-2.5 truncate max-w-md">
+                  <span className="text-base">{getFileIcon(doc.filename)}</span>
+                  <span className="font-semibold text-slate-800 truncate">{doc.filename}</span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <span className="text-slate-400 font-mono text-[11px]">
+                    {new Date(doc.uploadedAt || doc.createdAt).toLocaleDateString()}
+                  </span>
+                  <button
+                    onClick={() => handleDeleteDoc(doc._id)}
+                    className="text-slate-400 hover:text-red-600 transition cursor-pointer"
+                    title="Delete document"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
     </div>
   );
 };
@@ -177,7 +268,7 @@ export const ApiKeysView = () => {
             className="w-full p-3 border border-slate-200 rounded-xl text-sm outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-100"
           />
         </div>
-        <button className="px-4 py-2 bg-cyan-400 text-slate-900 font-bold text-xs rounded-xl hover:bg-cyan-500 transition">
+        <button className="px-4 py-2 bg-cyan-400 text-slate-900 font-bold text-xs rounded-xl hover:bg-cyan-500 transition cursor-pointer">
           Save Configuration
         </button>
       </div>
@@ -215,7 +306,7 @@ export const SystemStatusView = () => {
     <div className="p-6 max-w-3xl mx-auto space-y-4">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-bold text-slate-900">System Status</h2>
-        <button onClick={checkHealth} className="text-xs font-semibold text-cyan-600 hover:text-cyan-700">
+        <button onClick={checkHealth} className="text-xs font-semibold text-cyan-600 hover:text-cyan-700 cursor-pointer">
           Check Now
         </button>
       </div>
