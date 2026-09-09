@@ -5,6 +5,7 @@ import { ChatHistoryView, KnowledgeBaseView, ApiKeysView, SystemStatusView } fro
 import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { ThinkingIndicator } from './components/ThinkingIndicator';
 import { useChatStream } from './hooks/useChatStream';
+import { compressImage } from './utils/compressImage';
 
 // Dynamic API Base URL resolver with Render production fallback
 const API_BASE_URL =
@@ -63,6 +64,7 @@ export default function Chatbot() {
   const chatContainerRef = useRef(null);
   const chatEndRef = useRef(null);
   const isUserScrolledUpRef = useRef(false);
+  const isTouchingRef = useRef(false);
   const renameInputRef = useRef(null);
 
   const showToast = (message, type = 'info') => {
@@ -70,27 +72,21 @@ export default function Chatbot() {
     setTimeout(() => setToast({ visible: false, message: '', type: 'info' }), 3000);
   };
 
-  // Image & Document Upload Handler
-  const handleFileUpload = (e) => {
+  // Image & Document Upload Handler with Client-Side Compression
+  const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64Data = reader.result.split(',')[1];
-        setSelectedFilePayload({
-          filename: file.name,
-          type: 'image',
-          previewUrl: reader.result,
-          inlineData: {
-            data: base64Data,
-            mimeType: file.type,
-          },
-        });
+      try {
+        showToast('Compressing image...', 'info');
+        const compressedPayload = await compressImage(file);
+        setSelectedFilePayload(compressedPayload);
         showToast(`Attached image: ${file.name}`, 'info');
-      };
-      reader.readAsDataURL(file);
+      } catch (err) {
+        console.error('Image compression error:', err);
+        showToast('Failed to process image', 'error');
+      }
       e.target.value = '';
     } else {
       showToast(`Selected file: ${file.name}`, 'info');
@@ -172,15 +168,23 @@ export default function Chatbot() {
     fetchSidebarSessions();
   }, [currentSessionId]);
 
-  // SMART SCROLL: Detect manual scroll actions
+  // SMART SCROLL: Detect manual scroll and touch events to avoid fighting user input
   const handleScroll = () => {
     if (!chatContainerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
     const isAtBottom = scrollHeight - scrollTop - clientHeight < 80;
-    isUserScrolledUpRef.current = !isAtBottom;
+    isUserScrolledUpRef.current = !isAtBottom || isTouchingRef.current;
   };
 
-  // SMART SCROLL: Scroll to bottom while streaming unless user scrolled up
+  const handleTouchStart = () => {
+    isTouchingRef.current = true;
+  };
+
+  const handleTouchEnd = () => {
+    isTouchingRef.current = false;
+  };
+
+  // SMART SCROLL: Auto scroll on new chunks if user has not manually scrolled up or touched container
   useEffect(() => {
     if (!isUserScrolledUpRef.current) {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -574,6 +578,8 @@ export default function Chatbot() {
               <div
                 ref={chatContainerRef}
                 onScroll={handleScroll}
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
                 className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-6 bg-[#f8fafc]/40"
               >
                 {historyLoading ? (
