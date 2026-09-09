@@ -1,6 +1,11 @@
 import { useState, useCallback, useRef } from 'react';
 
-export const useChatStream = (apiBaseUrl = 'http://localhost:5000') => {
+// Resolve production Render URL dynamically if no default parameter is passed
+const DEFAULT_API_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
+  'https://chatbot-backend-qbfk.onrender.com';
+
+export const useChatStream = (apiBaseUrl = DEFAULT_API_URL) => {
   const [messages, setMessages] = useState([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState(null);
@@ -34,19 +39,24 @@ export const useChatStream = (apiBaseUrl = 'http://localhost:5000') => {
   }, []);
 
   const sendMessage = useCallback(
-    async ({ message, image, retryPayload = null }) => {
-      const payloadToSend = retryPayload || { message, image };
+    async ({ message, image, imagePreview, retryPayload = null }) => {
+      const payloadToSend = retryPayload || { message, image, imagePreview };
       lastFailedPayloadRef.current = payloadToSend;
 
-      const userText = payloadToSend.message || '[Image Attached]';
+      const userText = payloadToSend.message || '[Attached Image Query]';
       const tempUserMsgId = `user-${Date.now()}`;
       const tempAiMsgId = `ai-${Date.now()}`;
 
-      // 1. OPTIMISTIC UPDATE: Render message immediately
+      // 1. OPTIMISTIC UPDATE: Render message immediately with imagePreview thumbnail support
       if (!retryPayload) {
         setMessages((prev) => [
           ...prev,
-          { id: tempUserMsgId, role: 'user', content: userText, image: payloadToSend.image },
+          {
+            id: tempUserMsgId,
+            role: 'user',
+            content: userText,
+            imagePreview: payloadToSend.imagePreview,
+          },
           { id: tempAiMsgId, role: 'model', content: '', isLoading: true, isError: false },
         ]);
       } else {
@@ -143,7 +153,6 @@ export const useChatStream = (apiBaseUrl = 'http://localhost:5000') => {
         }
       } catch (err) {
         if (err.name === 'AbortError') {
-          // Handled via cancelStream
           return;
         }
 

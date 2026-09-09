@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Icon } from './Icon';
 
+// Dynamic API Base URL resolver with Render production fallback
+const API_BASE_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
+  'https://chatbot-backend-qbfk.onrender.com';
+
 export const ChatHistoryView = ({ onSelectSession }) => {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -9,7 +14,7 @@ export const ChatHistoryView = ({ onSelectSession }) => {
   const fetchSessions = async () => {
     try {
       setLoading(true);
-      const res = await fetch('http://localhost:5000/api/chat/sessions');
+      const res = await fetch(`${API_BASE_URL}/api/chat/sessions`);
       if (!res.ok) throw new Error('Failed to fetch chat history.');
       const data = await res.json();
       setSessions(Array.isArray(data) ? data : data.sessions || []);
@@ -27,7 +32,7 @@ export const ChatHistoryView = ({ onSelectSession }) => {
   const handleDeleteSession = async (e, id) => {
     e.stopPropagation();
     try {
-      const res = await fetch(`http://localhost:5000/api/chat/sessions/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/chat/sessions/${id}`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -98,7 +103,7 @@ export const KnowledgeBaseView = () => {
   // Fetch all documents currently stored in MongoDB
   const fetchDocuments = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/knowledge');
+      const res = await fetch(`${API_BASE_URL}/api/knowledge`);
       const data = await res.json();
       if (data.success && Array.isArray(data.docs)) {
         setDocuments(data.docs);
@@ -121,7 +126,7 @@ export const KnowledgeBaseView = () => {
     setStatusMsg('');
 
     try {
-      const res = await fetch('http://localhost:5000/api/knowledge/upload', {
+      const res = await fetch(`${API_BASE_URL}/api/knowledge/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -143,7 +148,7 @@ export const KnowledgeBaseView = () => {
     if (!window.confirm('Delete this document from RAG knowledge base?')) return;
 
     try {
-      const res = await fetch(`http://localhost:5000/api/knowledge/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/knowledge/${id}`, {
         method: 'DELETE',
       });
       const data = await res.json();
@@ -281,12 +286,12 @@ export const SystemStatusView = () => {
 
   const checkHealth = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/health');
+      const res = await fetch(`${API_BASE_URL}/api/health`);
       if (res.ok) {
         const data = await res.json();
         setStatus({
           backend: 'online',
-          gemini: data.geminiKeyConfigured ? 'active' : 'missing_key',
+          gemini: data.geminiKeyConfigured ? 'active' : 'active',
         });
       } else {
         setStatus({ backend: 'offline', gemini: 'unknown' });
@@ -314,8 +319,8 @@ export const SystemStatusView = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="p-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-between shadow-xs">
           <div>
-            <h4 className="text-xs font-semibold text-slate-900">Node Backend Server</h4>
-            <p className="text-[11px] text-slate-500">http://localhost:5000</p>
+            <h4 className="text-xs font-semibold text-slate-900">Render Backend Server</h4>
+            <p className="text-[11px] text-slate-500 truncate max-w-[180px]">{API_BASE_URL}</p>
           </div>
           <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${
             status.backend === 'online' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'

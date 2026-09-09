@@ -6,6 +6,11 @@ import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { ThinkingIndicator } from './components/ThinkingIndicator';
 import { useChatStream } from './hooks/useChatStream';
 
+// Dynamic API Base URL resolver with Render production fallback
+const API_BASE_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
+  'https://chatbot-backend-qbfk.onrender.com';
+
 const suggestionChips = [
   "Summarize my day",
   "Help me write an email",
@@ -30,7 +35,7 @@ export default function Chatbot() {
   // File & Image state
   const [selectedFilePayload, setSelectedFilePayload] = useState(null);
 
-  // Custom Streaming & Recovery Hook (Now destructuring cancelStream)
+  // Custom Streaming & Recovery Hook initialized with dynamic API Base URL
   const {
     messages,
     setMessages,
@@ -39,7 +44,7 @@ export default function Chatbot() {
     retryLastMessage,
     isStreaming,
     currentSessionId,
-  } = useChatStream('http://localhost:5000');
+  } = useChatStream(API_BASE_URL);
 
   // Voice recognition state
   const [isListening, setIsListening] = useState(false);
@@ -152,7 +157,7 @@ export default function Chatbot() {
 
   const fetchSidebarSessions = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/chat/sessions');
+      const res = await fetch(`${API_BASE_URL}/api/chat/sessions`);
       if (res.ok) {
         const data = await res.json();
         const sessionsList = data.sessions || (Array.isArray(data) ? data : []);
@@ -199,7 +204,7 @@ export default function Chatbot() {
     setIsMobileDrawerOpen(false);
 
     try {
-      const res = await fetch(`http://localhost:5000/api/chat/session/${sessionId}`);
+      const res = await fetch(`${API_BASE_URL}/api/chat/session/${sessionId}`);
       const data = await res.json();
 
       if (data.success && Array.isArray(data.messages) && data.messages.length > 0) {
@@ -231,7 +236,7 @@ export default function Chatbot() {
     if (!window.confirm("Are you sure you want to delete this chat session?")) return;
 
     try {
-      const res = await fetch(`http://localhost:5000/api/chat/sessions/${sessionId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/chat/sessions/${sessionId}`, {
         method: 'DELETE',
       });
 
@@ -274,7 +279,7 @@ export default function Chatbot() {
     }
 
     try {
-      const res = await fetch(`http://localhost:5000/api/chat/sessions/${sessionId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/chat/sessions/${sessionId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: editingTitleText.trim() }),
@@ -313,8 +318,10 @@ export default function Chatbot() {
 
     isUserScrolledUpRef.current = false;
 
+    // Send both Base64 inlineData (backend) and previewUrl (UI thumbnail bubble)
     sendMessage({
       message: input,
+      imagePreview: selectedFilePayload?.type === 'image' ? selectedFilePayload.previewUrl : null,
       image: selectedFilePayload?.type === 'image' ? selectedFilePayload.inlineData : null,
     });
 
@@ -599,6 +606,17 @@ export default function Chatbot() {
                                 : 'bg-[#eef8f9] border border-cyan-100 text-slate-900 rounded-bl-xs'
                             }`}
                           >
+                            {/* Render Attached Image Preview Thumbnail in User Bubbles */}
+                            {msg.imagePreview && (
+                              <div className="mb-2 overflow-hidden rounded-xl border border-white/20">
+                                <img
+                                  src={msg.imagePreview}
+                                  alt="User attachment"
+                                  className="max-h-60 w-full object-cover rounded-xl"
+                                />
+                              </div>
+                            )}
+
                             {msg.isLoading ? (
                               <ThinkingIndicator step="Generating response..." />
                             ) : msg.role === 'model' ? (

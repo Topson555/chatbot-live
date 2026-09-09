@@ -9,9 +9,10 @@ export default function ChatInput({ onSendMessage, onFileUpload }) {
 
   const recognitionRef = useRef(null);
 
+  // Fallback explicitly to your live Render backend URL for mobile compatibility
   const API_BASE_URL =
     (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
-    'http://localhost:5000';
+    'https://chatbot-backend-qbfk.onrender.com';
 
   useEffect(() => {
     return () => {
@@ -54,7 +55,7 @@ export default function ChatInput({ onSendMessage, onFileUpload }) {
       return;
     }
 
-    // Knowledge base Documents (PDF/TXT) -> Backend RAG store
+    // Knowledge base Documents (PDF/TXT) -> Correct Backend Route (/api/knowledge/upload)
     const formData = new FormData();
     formData.append('file', file);
 
