@@ -33,6 +33,11 @@ export default function Chatbot() {
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
 
+  // PWA Install State
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+
   // File & Image state
   const [selectedFilePayload, setSelectedFilePayload] = useState(null);
 
@@ -70,6 +75,46 @@ export default function Chatbot() {
   const showToast = (message, type = 'info') => {
     setToast({ visible: true, message, type });
     setTimeout(() => setToast({ visible: false, message: '', type: 'info' }), 3000);
+  };
+
+  // PWA Install Listener
+  useEffect(() => {
+    const userAgent = window.navigator.userAgent.toLowerCase();
+    const isIosDevice = /iphone|ipad|ipod/.test(userAgent);
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+
+    // Detect iOS devices running outside standalone PWA mode
+    if (isIosDevice && !isStandalone) {
+      setIsIOS(true);
+      setShowInstallBanner(true);
+    }
+
+    // Listen for native install prompt on Android / Chrome / Edge
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallBanner(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!deferredPrompt) return;
+
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+
+    if (outcome === 'accepted') {
+      showToast('Installing TOPSON AI...', 'success');
+    }
+
+    setDeferredPrompt(null);
+    setShowInstallBanner(false);
   };
 
   // Image & Document Upload Handler with Client-Side Compression
@@ -489,6 +534,44 @@ export default function Chatbot() {
             : 'bg-slate-900 text-white border-slate-700'
         }`}>
           <span>{toast.type === 'error' ? '❌' : toast.type === 'success' ? '✓' : 'ℹ️'} {toast.message}</span>
+        </div>
+      )}
+
+      {/* Custom PWA Installation Popup Banner */}
+      {showInstallBanner && (
+        <div className="fixed bottom-6 left-4 right-4 sm:left-auto sm:right-6 sm:w-96 z-50 bg-slate-900 border border-cyan-500/40 text-slate-100 p-4 rounded-2xl shadow-2xl backdrop-blur-md animate-in slide-in-from-bottom-5 duration-300">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold text-lg shrink-0">
+              📲
+            </div>
+            <div className="flex-1">
+              <h4 className="font-bold text-sm text-white">Install TOPSON AI App</h4>
+              <p className="text-xs text-slate-300 mt-1 leading-snug">
+                {isIOS
+                  ? "Tap the Share button below and select 'Add to Home Screen' for the best experience!"
+                  : "Install TOPSON AI on your home screen for fast fullscreen access."}
+              </p>
+
+              <div className="mt-3 flex items-center gap-2">
+                {!isIOS && deferredPrompt && (
+                  <button
+                    type="button"
+                    onClick={handleInstallApp}
+                    className="px-3.5 py-1.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold text-xs rounded-xl shadow-md transition cursor-pointer"
+                  >
+                    Install Now
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowInstallBanner(false)}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs rounded-xl transition cursor-pointer"
+                >
+                  Maybe Later
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
