@@ -8,9 +8,13 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      strategies: 'injectManifest', // Tells Vite to compile your custom template file
+      srcDir: 'src',
+      filename: 'sw-custom.js',     // Your custom SW source code file
+      swDest: 'dist/sw.js',         // Final output sw.js bundle generated in dist/
       registerType: 'autoUpdate',
       injectRegister: 'auto',
-      includeAssets: ['favicon.ico', 'robots.txt', 'apple-touch-icon.png'],
+      includeAssets: ['favicon.ico', 'robots.txt', 'apple-touch-icon.png', 'offline.html'],
       manifest: {
         name: 'TOPSON AI Assistant',
         short_name: 'TOPSON AI',
@@ -55,6 +59,9 @@ export default defineConfig({
             }
             if (id.includes('lucide-react')) {
               return 'vendor-icons';
+            }
+            if (id.includes('pdfjs-dist')) {
+              return 'vendor-pdf';
             }
             return 'vendor-libs';
           }

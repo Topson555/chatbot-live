@@ -4,8 +4,11 @@ import { ResponseTrackCards } from './components/ResponseTrackCards';
 import { ChatHistoryView, KnowledgeBaseView, ApiKeysView, SystemStatusView } from './components/Views';
 import { MarkdownRenderer } from './components/MarkdownRenderer';
 import { ThinkingIndicator } from './components/ThinkingIndicator';
+import { SpeechButton } from './components/SpeechButton';
+import { ArtifactModal } from './components/ArtifactModal';
 import { useChatStream } from './hooks/useChatStream';
 import { compressImage } from './utils/compressImage';
+import { parsePdfFile } from './utils/parsePdf';
 
 // Dynamic API Base URL resolver with Render production fallback
 const API_BASE_URL =
@@ -28,10 +31,20 @@ const sidebarNavItems = [
 
 export default function Chatbot() {
   const [activeTab, setActiveTab] = useState('Chat');
+
+  // Load persisted model from localStorage or default to gemini-1.5-flash
+  const [selectedModel, setSelectedModel] = useState(() => {
+    return localStorage.getItem('topson_selected_model') || 'gemini-1.5-flash';
+  });
+
   const [currentSessionTitle, setCurrentSessionTitle] = useState(null);
   const [sidebarSessions, setSidebarSessions] = useState([]);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
+
+  // Artifact Live Sandbox Modal state
+  const [artifactCode, setArtifactCode] = useState('');
+  const [isArtifactOpen, setIsArtifactOpen] = useState(false);
 
   // PWA Install State
   const [deferredPrompt, setDeferredPrompt] = useState(null);
@@ -77,6 +90,11 @@ export default function Chatbot() {
     setTimeout(() => setToast({ visible: false, message: '', type: 'info' }), 3000);
   };
 
+  // Persist model selection to localStorage whenever selectedModel changes
+  useEffect(() => {
+    localStorage.setItem('topson_selected_model', selectedModel);
+  }, [selectedModel]);
+
   // PWA Install Listener
   useEffect(() => {
     const userAgent = window.navigator.userAgent.toLowerCase();
@@ -117,7 +135,7 @@ export default function Chatbot() {
     setShowInstallBanner(false);
   };
 
-  // Image & Document Upload Handler with Client-Side Compression
+  // Image, PDF & Document Upload Handler
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -132,11 +150,35 @@ export default function Chatbot() {
         console.error('Image compression error:', err);
         showToast('Failed to process image', 'error');
       }
-      e.target.value = '';
+    } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+      try {
+        showToast('Parsing PDF document...', 'info');
+        const pdfText = await parsePdfFile(file);
+        setSelectedFilePayload({
+          type: 'text',
+          filename: file.name,
+          content: pdfText,
+        });
+        showToast(`Parsed PDF: ${file.name}`, 'success');
+      } catch (err) {
+        console.error('PDF parsing error:', err);
+        showToast('Failed to parse PDF document', 'error');
+      }
     } else {
-      showToast(`Selected file: ${file.name}`, 'info');
-      e.target.value = '';
+      try {
+        const textContent = await file.text();
+        setSelectedFilePayload({
+          type: 'text',
+          filename: file.name,
+          content: textContent,
+        });
+        showToast(`Attached file: ${file.name}`, 'info');
+      } catch (err) {
+        console.error('Text parsing error:', err);
+        showToast('Failed to read file text', 'error');
+      }
     }
+    e.target.value = '';
   };
 
   // Microphone / Speech Recognition Handler
@@ -367,15 +409,25 @@ export default function Chatbot() {
 
     isUserScrolledUpRef.current = false;
 
-    // Send both Base64 inlineData (backend) and previewUrl (UI thumbnail bubble)
+    let compiledMessage = input;
+    if (selectedFilePayload?.type === 'text') {
+      compiledMessage = `[Attached Context from ${selectedFilePayload.filename}]:\n${selectedFilePayload.content}\n\nUser Question: ${input}`;
+    }
+
     sendMessage({
-      message: input,
+      message: compiledMessage,
+      model: selectedModel,
       imagePreview: selectedFilePayload?.type === 'image' ? selectedFilePayload.previewUrl : null,
       image: selectedFilePayload?.type === 'image' ? selectedFilePayload.inlineData : null,
     });
 
     setInput('');
     setSelectedFilePayload(null);
+  };
+
+  const triggerArtifactPreview = (htmlContent) => {
+    setArtifactCode(htmlContent);
+    setIsArtifactOpen(true);
   };
 
   const exportChat = (format) => {
@@ -524,6 +576,13 @@ export default function Chatbot() {
 
   return (
     <div className="flex h-screen w-full bg-[#f8fafc] text-slate-800 overflow-hidden font-sans relative">
+      {/* Code Artifact Modal Sandbox */}
+      <ArtifactModal
+        isOpen={isArtifactOpen}
+        onClose={() => setIsArtifactOpen(false)}
+        htmlCode={artifactCode}
+      />
+
       {/* Toast Notification Container */}
       {toast.visible && (
         <div className={`fixed top-4 right-4 z-50 text-xs font-semibold px-4 py-2.5 rounded-xl shadow-lg border flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200 ${
@@ -620,7 +679,18 @@ export default function Chatbot() {
             </div>
           </div>
 
-          <div className="relative">
+          <div className="flex items-center gap-3 relative">
+            {/* Dynamic Model Switcher Dropdown Selector */}
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="bg-slate-100 border border-slate-200 text-slate-800 text-xs font-semibold px-2.5 py-1.5 rounded-xl outline-none focus:border-cyan-400 transition cursor-pointer"
+            >
+              <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+              <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+            </select>
+
             <button
               onClick={() => setShowSettingsMenu(!showSettingsMenu)}
               className="p-2 text-slate-400 hover:text-slate-700 rounded-lg transition cursor-pointer"
@@ -628,7 +698,7 @@ export default function Chatbot() {
               <Icon name="settings" className="w-5 h-5" />
             </button>
             {showSettingsMenu && (
-              <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-lg py-2 z-50 text-xs">
+              <div className="absolute right-0 mt-2 top-10 w-48 bg-white border border-slate-200 rounded-xl shadow-lg py-2 z-50 text-xs">
                 <p className="px-3 py-1 font-semibold text-slate-400 uppercase tracking-wider text-[10px]">Export Options</p>
                 <button
                   onClick={() => exportChat('markdown')}
@@ -695,7 +765,26 @@ export default function Chatbot() {
                                 : 'bg-[#eef8f9] border border-cyan-100 text-slate-900 rounded-bl-xs'
                             }`}
                           >
-                            {/* Render Attached Image Preview Thumbnail in User Bubbles */}
+                            {/* Speech & Artifact Toolbar for AI Response Bubbles */}
+                            {msg.role === 'model' && !msg.isLoading && (
+                              <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-slate-200/40">
+                                <SpeechButton text={msg.content} />
+                                {msg.content.includes('```html') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const match = msg.content.match(/```html([\s\S]*?)```/);
+                                      if (match?.[1]) triggerArtifactPreview(match[1]);
+                                    }}
+                                    className="text-xs text-cyan-600 font-bold hover:underline cursor-pointer flex items-center gap-1"
+                                  >
+                                    <span>⚡ Preview Artifact</span>
+                                  </button>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Attached Image Preview Thumbnail in User Bubbles */}
                             {msg.imagePreview && (
                               <div className="mb-2 overflow-hidden rounded-xl border border-white/20">
                                 <img
@@ -756,7 +845,7 @@ export default function Chatbot() {
                       <button
                         key={chip}
                         disabled={isStreaming}
-                        onClick={() => sendMessage({ message: chip })}
+                        onClick={() => sendMessage({ message: chip, model: selectedModel })}
                         className="px-4 py-1.5 bg-slate-50 border border-slate-200/80 text-slate-700 rounded-full text-xs font-semibold whitespace-nowrap hover:bg-slate-100 hover:border-slate-300 transition cursor-pointer disabled:opacity-50"
                       >
                         {chip}
@@ -792,7 +881,7 @@ export default function Chatbot() {
                     <label
                       htmlFor="file-upload"
                       className="p-2 text-slate-400 hover:text-slate-600 transition rounded-full cursor-pointer flex items-center justify-center shrink-0"
-                      title="Upload file or image"
+                      title="Upload file, PDF or image"
                     >
                       <Icon name="upload" className="w-5 h-5" />
                       <input

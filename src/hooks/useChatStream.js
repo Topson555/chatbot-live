@@ -39,8 +39,8 @@ export const useChatStream = (apiBaseUrl = DEFAULT_API_URL) => {
   }, []);
 
   const sendMessage = useCallback(
-    async ({ message, image, imagePreview, retryPayload = null }) => {
-      const payloadToSend = retryPayload || { message, image, imagePreview };
+    async ({ message, image, imagePreview, model = 'gemini-1.5-flash', retryPayload = null }) => {
+      const payloadToSend = retryPayload || { message, image, imagePreview, model };
       lastFailedPayloadRef.current = payloadToSend;
 
       const userText = payloadToSend.message || '[Attached Image Query]';
@@ -71,6 +71,35 @@ export const useChatStream = (apiBaseUrl = DEFAULT_API_URL) => {
 
       setIsStreaming(true);
 
+      // Check offline connectivity status before attempting fetch
+      if (!navigator.onLine) {
+        setIsStreaming(false);
+        setMessages((prev) => {
+          const updated = [...prev];
+          const lastMsgIdx = updated.length - 1;
+          if (lastMsgIdx >= 0 && updated[lastMsgIdx].role === 'model') {
+            updated[lastMsgIdx] = {
+              ...updated[lastMsgIdx],
+              isLoading: false,
+              isError: true,
+              content: 'You are currently offline. Message queued for Background Sync when connectivity returns.',
+            };
+          }
+          return updated;
+        });
+
+        // Register Background Sync if supported by browser Service Worker
+        if ('serviceWorker' in navigator && 'SyncManager' in window) {
+          try {
+            const swRegistration = await navigator.serviceWorker.ready;
+            await swRegistration.sync.register('send-queued-messages');
+          } catch (syncErr) {
+            console.error('Failed to register Background Sync:', syncErr);
+          }
+        }
+        return;
+      }
+
       // Create new AbortController instance
       abortControllerRef.current = new AbortController();
 
@@ -82,6 +111,7 @@ export const useChatStream = (apiBaseUrl = DEFAULT_API_URL) => {
           body: JSON.stringify({
             message: payloadToSend.message,
             image: payloadToSend.image,
+            model: payloadToSend.model || 'gemini-1.5-flash',
             sessionId: currentSessionId,
           }),
         });
