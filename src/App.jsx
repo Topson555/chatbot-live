@@ -95,6 +95,21 @@ export default function Chatbot() {
     localStorage.setItem('topson_selected_model', selectedModel);
   }, [selectedModel]);
 
+  // PERSIST ACTIVE CHAT SESSION ID Across Page Reloads
+  useEffect(() => {
+    if (currentSessionId) {
+      localStorage.setItem('topson_active_session_id', currentSessionId);
+    }
+  }, [currentSessionId]);
+
+  // RESTORE CHAT SESSION ON INITIAL LOAD
+  useEffect(() => {
+    const savedSessionId = localStorage.getItem('topson_active_session_id');
+    if (savedSessionId && !currentSessionId) {
+      handleSelectHistorySession(savedSessionId);
+    }
+  }, []);
+
   // PWA Install Listener
   useEffect(() => {
     const userAgent = window.navigator.userAgent.toLowerCase();
@@ -279,6 +294,7 @@ export default function Chatbot() {
   }, [messages, isStreaming]);
 
   const handleStartNewChat = () => {
+    localStorage.removeItem('topson_active_session_id'); // Clear active session from localStorage
     setMessages([
       { id: Date.now(), role: 'model', content: "Hello! Started a fresh conversation thread. What are we working on?" },
     ]);
@@ -289,6 +305,7 @@ export default function Chatbot() {
   };
 
   const handleSelectHistorySession = async (sessionId, title) => {
+    localStorage.setItem('topson_active_session_id', sessionId); // Persist explicitly selected session
     setCurrentSessionTitle(title || `Session ${sessionId.slice(-4)}`);
     setActiveTab('Chat');
     setHistoryLoading(true);
